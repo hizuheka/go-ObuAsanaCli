@@ -17,9 +17,10 @@ import (
 
 // Config は設定ファイルの構造体です
 type Config struct {
-	PersonalAccessToken string `yaml:"personal_access_token"`
-	WorkspaceID         string `yaml:"workspace_id"`
-	ProjectID           string `yaml:"project_id"`
+	PersonalAccessToken string            `yaml:"personal_access_token"`
+	WorkspaceID         string            `yaml:"workspace_id"`
+	ProjectID           string            `yaml:"project_id"`
+	Assignees           map[string]string `yaml:"assignees"` // 追加: 担当者のショートカットとGIDのマッピング
 }
 
 // TaskRequest はAsana APIへ送信するJSONリクエストの構造体です
@@ -33,6 +34,7 @@ type TaskData struct {
 	Workspace string   `json:"workspace"`
 	Projects  []string `json:"projects"`
 	Notes     string   `json:"notes,omitempty"`
+	Assignee  string   `json:"assignee,omitempty"` // 追加: 担当者(GID)
 	DueOn     string   `json:"due_on,omitempty"`
 }
 
@@ -63,7 +65,7 @@ func main() {
 
 	// 設定値の簡易チェック（PATなどが空でないか）
 	if cfg.PersonalAccessToken == "" || cfg.WorkspaceID == "" || cfg.ProjectID == "" {
-		fmt.Printf("エラー: 設定ファイル(%s)の値が未入力です。PAT、Workspace ID、Project IDを正しく入力してください。\n", configPath)
+		fmt.Printf("エラー: 設定ファイル(%s)の必須項目が未入力です。\n", configPath)
 		os.Exit(1)
 	}
 
@@ -76,23 +78,51 @@ func main() {
 	// 4. タスクの説明の入力 (任意)
 	notes := promptInput(scanner, "タスクの説明を入力してください (省略可): ", false)
 
-	// 5. 期日の入力 (任意・形式チェックあり)
-	var dueOn string
+	// 5. 担当者の入力 (任意・ショートカット変換あり)
+	var assigneeGID string
 	for {
-		dueOn = promptInput(scanner, "期日を入力してください (YYYY-MM-DD / 省略可): ", false)
-		if dueOn == "" {
+		assigneeInput := promptInput(scanner, "担当者を入力してください (me / 設定名 / 省略可): ", false)
+		if assigneeInput == "" {
 			break // 省略時
 		}
+
+		// 設定ファイルのマップからGIDを検索
+		if gid, ok := cfg.Assignees[assigneeInput]; ok {
+			assigneeGID = gid
+			break
+		} else {
+			fmt.Printf("エラー: '%s' は設定ファイルの assignees に登録されていません。\n", assigneeInput)
+			// 再入力させる
+		}
+	}
+
+	// 6. 期日の入力 (任意・today変換・形式チェックあり)
+	var dueOn string
+	for {
+		inputDue := promptInput(scanner, "期日を入力してください (today / YYYY-MM-DD / 省略可): ", false)
+
+		if inputDue == "" {
+			break // 省略時
+		}
+
+		// 'today' ショートカットの処理
+		if strings.ToLower(inputDue) == "today" {
+			dueOn = time.Now().Format("2006-01-02")
+			fmt.Printf("  -> 期日を %s に設定しました\n", dueOn)
+			break
+		}
+
 		// 日付形式(YYYY-MM-DD)のバリデーション
-		_, err := time.Parse("2006-01-02", dueOn)
+		_, err := time.Parse("2006-01-02", inputDue)
 		if err != nil {
-			fmt.Println("エラー: 日付の形式が正しくありません。YYYY-MM-DDの形式で入力してください。")
+			fmt.Println("エラー: 日付の形式が正しくありません。today または YYYY-MM-DD の形式で入力してください。")
 			continue
 		}
+		dueOn = inputDue
 		break
 	}
 
-	// 6. Asana APIへのリクエスト実行
+	// 7. Asana APIへのリクエスト実行
 	fmt.Println("\nタスクを登録しています...")
 	taskData := TaskData{
 		Name:      name,
@@ -101,6 +131,9 @@ func main() {
 	}
 	if notes != "" {
 		taskData.Notes = notes
+	}
+	if assigneeGID != "" {
+		taskData.Assignee = assigneeGID
 	}
 	if dueOn != "" {
 		taskData.DueOn = dueOn
@@ -125,7 +158,7 @@ func loadConfig(configPath, appDir string) (*Config, error) {
 				return nil, fmt.Errorf("雛形の作成に失敗しました: %w", err)
 			}
 			fmt.Printf("\n設定ファイルの雛形を作成しました。\n")
-			fmt.Printf("お手数ですが、テキストエディタで %s を開き、PATやIDを入力してから再度ツールを実行してください。\n", configPath)
+			fmt.Printf("お手数ですが、エディタで %s を開き、PATやID、担当者のGIDを入力して再度実行してください。\n", configPath)
 			os.Exit(0) // 雛形作成後は終了する
 		} else {
 			fmt.Println("設定ファイルが存在しないため、ツールを終了します。")
@@ -144,6 +177,11 @@ func loadConfig(configPath, appDir string) (*Config, error) {
 		return nil, fmt.Errorf("YAMLのパースに失敗: %w", err)
 	}
 
+	// Assigneesマップがnilの場合に初期化しておく（設定ファイルに記載がない場合への備え）
+	if cfg.Assignees == nil {
+		cfg.Assignees = make(map[string]string)
+	}
+
 	return &cfg, nil
 }
 
@@ -154,11 +192,15 @@ func createConfigTemplate(configPath, appDir string) error {
 		return err
 	}
 
-	// 空の設定構造体
+	// 担当者の雛形を含めた構造体
 	template := Config{
 		PersonalAccessToken: "",
 		WorkspaceID:         "",
 		ProjectID:           "",
+		Assignees: map[string]string{
+			"me":   "YOUR_GID_HERE",
+			"john": "JOHNS_GID_HERE",
+		},
 	}
 
 	data, err := yaml.Marshal(&template)
@@ -168,8 +210,9 @@ func createConfigTemplate(configPath, appDir string) error {
 
 	// コメント付きで書き込むために調整
 	content := []byte(
-		"# Asana API Personal Access Token\n" +
-			"# (https://app.asana.com/0/developer-console から取得)\n" +
+		"# Asana API Configuration\n" +
+			"# Personal Access Token: https://app.asana.com/0/developer-console から取得\n" +
+			"# Assignees: ショートカット名とAsanaのユーザーGIDを紐付けます\n" +
 			string(data),
 	)
 
@@ -217,7 +260,7 @@ func createTask(pat string, taskReq TaskRequest) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Printf("エラー: Asana APIへの接続に失敗しました (ネットワークエラー): %v\n", err)
+		fmt.Printf("エラー: Asana APIへの接続に失敗しました: %v\n", err)
 		os.Exit(1)
 	}
 	defer resp.Body.Close()
