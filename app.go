@@ -22,6 +22,7 @@ func (a *App) Run(ctx context.Context) error {
 	a.ui.Show("🚀 Asana Task Register")
 	a.ui.Show("-----------------------")
 
+	// 1. 設定ファイルの存在チェックとテンプレート作成
 	if !a.config.Exists() {
 		a.ui.Show("設定ファイルが見つかりません。")
 		if !a.ui.Confirm("新しい設定ファイルの雛形を作成しますか？ (Y/n)") {
@@ -34,13 +35,15 @@ func (a *App) Run(ctx context.Context) error {
 		return nil
 	}
 
+	// 2. 設定ファイルの読み込み
 	cfg, err := a.config.Load()
 	if err != nil {
 		return fmt.Errorf("設定ファイルの読み込みに失敗しました: %w", err)
 	}
 
-	if cfg.PersonalAccessToken == "" || cfg.WorkspaceID == "" || cfg.ProjectID == "" {
-		return errors.New("設定ファイルの必須項目(PAT, WorkspaceID, ProjectID)が未入力です")
+	// 必須チェック (ProjectID は対話入力になったため除外)
+	if cfg.PersonalAccessToken == "" || cfg.WorkspaceID == "" {
+		return errors.New("設定ファイルの必須項目(PAT, WorkspaceID)が未入力です")
 	}
 
 	// 実行時までAPIクライアントが作られていない場合はここで遅延生成する
@@ -48,8 +51,32 @@ func (a *App) Run(ctx context.Context) error {
 		a.client = NewAsanaClient(cfg.PersonalAccessToken)
 	}
 
+	// 3. タスク名の入力 (必須)
 	name := a.ui.Prompt("タスク名を入力してください: ", true)
 
+	// 4. プロジェクトの入力 (新機能)
+	var projectGID string
+	for {
+		promptMsg := fmt.Sprintf("プロジェクトを入力してください (設定名 / 省略時は '%s'): ", cfg.DefaultProject)
+		input := a.ui.Prompt(promptMsg, false)
+
+		gid, err := ResolveProject(input, cfg.Projects, cfg.DefaultProject)
+		if err != nil {
+			a.ui.Show(fmt.Sprintf("⚠️ %v", err))
+			continue
+		}
+		projectGID = gid
+
+		// ユーザーへのフィードバック
+		targetName := input
+		if input == "" {
+			targetName = cfg.DefaultProject
+		}
+		a.ui.Show(fmt.Sprintf("  -> プロジェクトを '%s' に設定しました", targetName))
+		break
+	}
+
+	// 5. 担当者の入力
 	var assigneeGID string
 	for {
 		input := a.ui.Prompt("担当者を入力してください (me / 設定名 / 省略可): ", false)
@@ -62,8 +89,10 @@ func (a *App) Run(ctx context.Context) error {
 		break
 	}
 
+	// 6. タスクの説明入力
 	notes := a.ui.Prompt("タスクの説明を入力してください (省略可): ", false)
 
+	// 7. 期日の入力
 	var dueOn string
 	for {
 		input := a.ui.Prompt("期日を入力してください (today / YYYY-MM-DD / 省略可): ", false)
@@ -79,11 +108,12 @@ func (a *App) Run(ctx context.Context) error {
 		break
 	}
 
+	// 8. APIリクエスト実行
 	a.ui.Show("\n📡 Asanaに登録中...")
 	taskData := TaskData{
 		Name:      name,
 		Workspace: cfg.WorkspaceID,
-		Projects:  []string{cfg.ProjectID},
+		Projects:  []string{projectGID},
 		Notes:     notes,
 		Assignee:  assigneeGID,
 		DueOn:     dueOn,
@@ -95,6 +125,7 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("通信エラー: %w", err)
 	}
 
+	// 9. 結果の表示
 	a.ui.Show("✅ 登録完了！\n🔗 " + url)
 	return nil
 }

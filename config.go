@@ -9,13 +9,14 @@ import (
 )
 
 type Config struct {
-	PersonalAccessToken string            `yaml:"personal_access_token"`
-	WorkspaceID         string            `yaml:"workspace_id"`
-	ProjectID           string            `yaml:"project_id"`
-	Assignees           map[string]string `yaml:"assignees"`
+	PersonalAccessToken string `yaml:"personal_access_token"`
+	WorkspaceID         string `yaml:"workspace_id"`
+	// 追加: 複数プロジェクトの管理とデフォルト設定
+	Projects       map[string]string `yaml:"projects"`
+	DefaultProject string            `yaml:"default_project"`
+	Assignees      map[string]string `yaml:"assignees"`
 }
 
-// ConfigStore は設定操作を抽象化します
 type ConfigStore interface {
 	Exists() bool
 	Load() (*Config, error)
@@ -53,8 +54,12 @@ func (s *yamlConfigStore) Load() (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}
+	// マップがnilの場合の初期化
 	if cfg.Assignees == nil {
 		cfg.Assignees = make(map[string]string)
+	}
+	if cfg.Projects == nil {
+		cfg.Projects = make(map[string]string)
 	}
 	return &cfg, nil
 }
@@ -63,7 +68,14 @@ func (s *yamlConfigStore) CreateTemplate() error {
 	if err := os.MkdirAll(s.appDir, 0755); err != nil {
 		return err
 	}
-	template := Config{Assignees: map[string]string{"me": "YOUR_GID"}}
+	template := Config{
+		Assignees: map[string]string{"me": "YOUR_GID"},
+		Projects: map[string]string{
+			"dev":       "PROJECT_GID_1",
+			"marketing": "PROJECT_GID_2",
+		},
+		DefaultProject: "dev",
+	}
 	data, _ := yaml.Marshal(&template)
 	content := []byte("# Asana Config\n# personal_access_token: https://app.asana.com/0/developer-console から取得\n" + string(data))
 	return os.WriteFile(s.path, content, 0644)

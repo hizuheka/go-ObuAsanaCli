@@ -55,3 +55,36 @@ func TestResolveDueOn(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveProject(t *testing.T) {
+	projects := map[string]string{
+		"dev":  "111",
+		"mktg": "222",
+	}
+
+	tests := []struct {
+		name        string
+		input       string
+		defaultProj string
+		want        string
+		wantErr     error
+	}{
+		{"直接指定（成功）", "mktg", "dev", "222", nil},
+		{"空入力でデフォルト適用", "", "dev", "111", nil},
+		{"存在しないプロジェクト", "sales", "dev", "", ErrProjectNotFound},
+		{"デフォルト未設定で空入力", "", "", "", ErrDefaultNotSet},
+		{"デフォルト設定のプロジェクトが存在しない", "", "wrong", "", ErrProjectNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ResolveProject(tt.input, projects, tt.defaultProj)
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("want err %v, got %v", tt.wantErr, err)
+			}
+			if got != tt.want {
+				t.Errorf("want %v, got %v", tt.want, got)
+			}
+		})
+	}
+}
