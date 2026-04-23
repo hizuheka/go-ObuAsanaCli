@@ -11,18 +11,28 @@ import (
 // --- モックの実装 ---
 
 type mockUI struct {
-	inputs   []string
-	inputIdx int
-	confirms []bool
-	confIdx  int
+	inputs      []string
+	inputIdx    int
+	passwords   []string
+	passwordIdx int
+	confirms    []bool
+	confIdx     int
 }
 
 func (m *mockUI) Prompt(msg string, req bool) string {
 	if m.inputIdx >= len(m.inputs) {
-		return "" // パニック防止
+		return ""
 	}
 	res := m.inputs[m.inputIdx]
 	m.inputIdx++
+	return res
+}
+func (m *mockUI) PromptPassword(msg string) string {
+	if m.passwordIdx >= len(m.passwords) {
+		return ""
+	}
+	res := m.passwords[m.passwordIdx]
+	m.passwordIdx++
 	return res
 }
 func (m *mockUI) Show(msg string) {}
@@ -50,26 +60,33 @@ func (m *mockClient) CreateTask(ctx context.Context, task TaskData) (string, err
 	return "https://asana.com/task/1", nil
 }
 
-// --- テストケース ---
+type mockTokenStore struct {
+	token string
+	err   error
+}
 
-// デフォルトプロジェクトが適用されるフロー（プロジェクト入力を空打ちした場合）
-func TestAppRun_SuccessFlow_WithDefaultProject(t *testing.T) {
+func (m *mockTokenStore) Get() (string, error)   { return m.token, m.err }
+func (m *mockTokenStore) Set(token string) error { m.token = token; return nil }
+func (m *mockTokenStore) Delete() error          { m.token = ""; return nil }
+
+// --- Tests ---
+
+func TestAppRun_SuccessFlow_WithExistingTokenAndDefaultProject(t *testing.T) {
 	cfg := &Config{
-		PersonalAccessToken: "test-pat",
-		WorkspaceID:         "ws-1",
-		Projects:            map[string]string{"dev": "111", "mktg": "222"},
-		DefaultProject:      "dev", // デフォルト指定
-		Assignees:           map[string]string{"me": "123"},
+		WorkspaceID:    "ws-1",
+		Projects:       map[string]string{"dev": "111", "mktg": "222"},
+		DefaultProject: "dev",
+		Assignees:      map[string]string{"me": "123"},
 	}
 
 	app := &App{
-		// 入力順: タスク名, プロジェクト, 担当者, 説明, 期日
-		// 2番目の "" がプロジェクト入力のスキップ（デフォルト適用）をエミュレート
-		ui:     &mockUI{inputs: []string{"テストタスク", "", "me", "説明", "today"}},
-		client: &mockClient{},
-		config: &mockConfig{exists: true, cfg: cfg},
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		nowFn:  func() time.Time { return time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC) },
+		// 入力順: タスク名, プロジェクト(空でデフォルト), 担当者, 説明, 期日
+		ui:         &mockUI{inputs: []string{"テストタスク", "", "me", "説明", "today"}},
+		client:     &mockClient{},
+		config:     &mockConfig{exists: true, cfg: cfg},
+		tokenStore: &mockTokenStore{token: "existing-pat"},
+		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		nowFn:      func() time.Time { return time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC) },
 	}
 
 	if err := app.Run(context.Background()); err != nil {
@@ -77,24 +94,23 @@ func TestAppRun_SuccessFlow_WithDefaultProject(t *testing.T) {
 	}
 }
 
-// 特定のプロジェクトを明示的に指定するフロー
-func TestAppRun_SuccessFlow_WithSpecificProject(t *testing.T) {
+func TestAppRun_AskTokenWhenNotSet(t *testing.T) {
 	cfg := &Config{
-		PersonalAccessToken: "test-pat",
-		WorkspaceID:         "ws-1",
-		Projects:            map[string]string{"dev": "111", "mktg": "222"},
-		DefaultProject:      "dev",
-		Assignees:           map[string]string{"me": "123"},
+		WorkspaceID:    "ws-1",
+		Projects:       map[string]string{"dev": "111"},
+		DefaultProject: "dev",
 	}
 
 	app := &App{
-		// 入力順: タスク名, プロジェクト, 担当者, 説明, 期日
-		// "mktg" を明示的に指定
-		ui:     &mockUI{inputs: []string{"マーケティングタスク", "mktg", "me", "", "2026-12-31"}},
-		client: &mockClient{},
-		config: &mockConfig{exists: true, cfg: cfg},
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		nowFn:  func() time.Time { return time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC) },
+		ui: &mockUI{
+			passwords: []string{"new-pat-from-input"},
+			inputs:    []string{"テスト", "", "", "", ""},
+		},
+		client:     &mockClient{},
+		config:     &mockConfig{exists: true, cfg: cfg},
+		tokenStore: &mockTokenStore{token: "", err: ErrTokenNotFound},
+		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		nowFn:      func() time.Time { return time.Time{} },
 	}
 
 	if err := app.Run(context.Background()); err != nil {
@@ -102,13 +118,13 @@ func TestAppRun_SuccessFlow_WithSpecificProject(t *testing.T) {
 	}
 }
 
-// 設定ファイルが存在せず、作成もキャンセルした場合
 func TestAppRun_MissingConfig(t *testing.T) {
 	app := &App{
-		ui:     &mockUI{confirms: []bool{false}}, // 作成をキャンセル
-		config: &mockConfig{exists: false},
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		nowFn:  time.Now,
+		ui:         &mockUI{confirms: []bool{false}},
+		config:     &mockConfig{exists: false},
+		tokenStore: &mockTokenStore{},
+		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		nowFn:      time.Now,
 	}
 
 	err := app.Run(context.Background())

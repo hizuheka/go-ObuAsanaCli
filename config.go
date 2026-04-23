@@ -8,10 +8,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Config から PersonalAccessToken を削除しました
 type Config struct {
-	PersonalAccessToken string `yaml:"personal_access_token"`
-	WorkspaceID         string `yaml:"workspace_id"`
-	// 追加: 複数プロジェクトの管理とデフォルト設定
+	WorkspaceID    string            `yaml:"workspace_id"`
 	Projects       map[string]string `yaml:"projects"`
 	DefaultProject string            `yaml:"default_project"`
 	Assignees      map[string]string `yaml:"assignees"`
@@ -69,7 +68,8 @@ func (s *yamlConfigStore) CreateTemplate() error {
 		return err
 	}
 	template := Config{
-		Assignees: map[string]string{"me": "YOUR_GID"},
+		WorkspaceID: "YOUR_WORKSPACE_GID",
+		Assignees:   map[string]string{"me": "YOUR_GID"},
 		Projects: map[string]string{
 			"dev":       "PROJECT_GID_1",
 			"marketing": "PROJECT_GID_2",
@@ -77,6 +77,6 @@ func (s *yamlConfigStore) CreateTemplate() error {
 		DefaultProject: "dev",
 	}
 	data, _ := yaml.Marshal(&template)
-	content := []byte("# Asana Config\n# personal_access_token: https://app.asana.com/0/developer-console から取得\n" + string(data))
+	content := []byte("# Asana Config\n# 注: PAT(Personal Access Token)はOSの資格情報マネージャーに安全に保存されるため、ここには記述しません。\n" + string(data))
 	return os.WriteFile(s.path, content, 0644)
 }

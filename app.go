@@ -9,20 +9,20 @@ import (
 	"time"
 )
 
-// App は依存オブジェクトを持ち、一連の実行フローを管理します
 type App struct {
-	ui     UI
-	client AsanaClient
-	config ConfigStore
-	logger *slog.Logger
-	nowFn  func() time.Time // モック化を容易にするための関数ポインタ
+	ui         UI
+	client     AsanaClient
+	config     ConfigStore
+	tokenStore TokenStore
+	logger     *slog.Logger
+	nowFn      func() time.Time
 }
 
 func (a *App) Run(ctx context.Context) error {
 	a.ui.Show("🚀 Asana Task Register")
 	a.ui.Show("-----------------------")
 
-	// 1. 設定ファイルの存在チェックとテンプレート作成
+	// 1. 設定ファイルのチェックと作成
 	if !a.config.Exists() {
 		a.ui.Show("設定ファイルが見つかりません。")
 		if !a.ui.Confirm("新しい設定ファイルの雛形を作成しますか？ (Y/n)") {
@@ -35,31 +35,42 @@ func (a *App) Run(ctx context.Context) error {
 		return nil
 	}
 
-	// 2. 設定ファイルの読み込み
+	// 2. ワークスペース等の設定読み込み
 	cfg, err := a.config.Load()
 	if err != nil {
 		return fmt.Errorf("設定ファイルの読み込みに失敗しました: %w", err)
 	}
-
-	// 必須チェック (ProjectID は対話入力になったため除外)
-	if cfg.PersonalAccessToken == "" || cfg.WorkspaceID == "" {
-		return errors.New("設定ファイルの必須項目(PAT, WorkspaceID)が未入力です")
+	if cfg.WorkspaceID == "" {
+		return errors.New("設定ファイルの必須項目(WorkspaceID)が未入力です")
 	}
 
-	// 実行時までAPIクライアントが作られていない場合はここで遅延生成する
+	// 3. PAT(Personal Access Token)の取得（OSのシークレットストアから）
+	pat, err := a.tokenStore.Get()
+	if err != nil || pat == "" {
+		a.ui.Show("⚠️ Personal Access Token がOSのシークレットに登録されていません。")
+		pat = a.ui.PromptPassword("Asana PATを入力してください (入力は非表示になります): ")
+
+		if err := a.tokenStore.Set(pat); err != nil {
+			a.logger.Error("failed to save token to keyring", slog.Any("error", err))
+			a.ui.Show("⚠️ 警告: トークンの安全な保存に失敗しました。次回も入力が必要になります。")
+		} else {
+			a.ui.Show("✅ トークンをシステムの資格情報に安全に保存しました！")
+		}
+	}
+
+	// APIクライアントの生成
 	if a.client == nil {
-		a.client = NewAsanaClient(cfg.PersonalAccessToken)
+		a.client = NewAsanaClient(pat)
 	}
 
-	// 3. タスク名の入力 (必須)
+	// 4. タスク名入力
 	name := a.ui.Prompt("タスク名を入力してください: ", true)
 
-	// 4. プロジェクトの入力 (新機能)
+	// 5. プロジェクト入力
 	var projectGID string
 	for {
 		promptMsg := fmt.Sprintf("プロジェクトを入力してください (設定名 / 省略時は '%s'): ", cfg.DefaultProject)
 		input := a.ui.Prompt(promptMsg, false)
-
 		gid, err := ResolveProject(input, cfg.Projects, cfg.DefaultProject)
 		if err != nil {
 			a.ui.Show(fmt.Sprintf("⚠️ %v", err))
@@ -67,7 +78,6 @@ func (a *App) Run(ctx context.Context) error {
 		}
 		projectGID = gid
 
-		// ユーザーへのフィードバック
 		targetName := input
 		if input == "" {
 			targetName = cfg.DefaultProject
@@ -76,7 +86,7 @@ func (a *App) Run(ctx context.Context) error {
 		break
 	}
 
-	// 5. 担当者の入力
+	// 6. 担当者入力
 	var assigneeGID string
 	for {
 		input := a.ui.Prompt("担当者を入力してください (me / 設定名 / 省略可): ", false)
@@ -89,10 +99,10 @@ func (a *App) Run(ctx context.Context) error {
 		break
 	}
 
-	// 6. タスクの説明入力
+	// 7. タスクの説明入力
 	notes := a.ui.Prompt("タスクの説明を入力してください (省略可): ", false)
 
-	// 7. 期日の入力
+	// 8. 期日入力
 	var dueOn string
 	for {
 		input := a.ui.Prompt("期日を入力してください (today / YYYY-MM-DD / 省略可): ", false)
@@ -108,7 +118,7 @@ func (a *App) Run(ctx context.Context) error {
 		break
 	}
 
-	// 8. APIリクエスト実行
+	// 9. APIリクエスト
 	a.ui.Show("\n📡 Asanaに登録中...")
 	taskData := TaskData{
 		Name:      name,
@@ -125,7 +135,6 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("通信エラー: %w", err)
 	}
 
-	// 9. 結果の表示
 	a.ui.Show("✅ 登録完了！\n🔗 " + url)
 	return nil
 }
