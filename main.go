@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,7 @@ func main() {
 	configStore, err := NewYamlConfigStore()
 	if err != nil {
 		fmt.Printf("❌ システムエラー: %v\n", err)
+		waitBeforeExit()
 		os.Exit(1)
 	}
 
@@ -27,8 +29,20 @@ func main() {
 		nowFn:      time.Now,
 	}
 
+	// アプリケーションの実行
 	if err := app.Run(context.Background()); err != nil {
 		fmt.Printf("\n❌ %v\n", err)
+		waitBeforeExit()
 		os.Exit(1)
 	}
+
+	// 正常終了時の待機
+	waitBeforeExit()
+}
+
+// waitBeforeExit はウィンドウが閉じる前にユーザーの入力を待機します
+func waitBeforeExit() {
+	fmt.Print("\nエンターキーを押して終了してください...")
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Scan()
 }
