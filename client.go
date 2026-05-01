@@ -37,7 +37,7 @@ type asanaHTTPClient struct {
 func NewAsanaClient(pat string) AsanaClient {
 	return &asanaHTTPClient{
 		pat:    pat,
-		client: &http.Client{Timeout: 10 * time.Second},
+		client: &http.Client{Timeout: 30 * time.Second}, // タイムアウトを30秒に延長
 	}
 }
 
