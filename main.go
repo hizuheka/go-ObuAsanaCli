@@ -2,9 +2,12 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"log/slog"
 	"os"
 	"time"
+
+	"github.com/inconshreveable/mousetrap"
 )
 
 func main() {
@@ -48,16 +51,14 @@ func main() {
 	waitBeforeExit()
 }
 
-// waitBeforeExit は、プログラム終了前にユーザーがエンターキーを押すまで待機します。
-// エクスプローラーから直接実行した際に、結果の出力が閉じて見えなくなるのを防ぎます。
+// waitBeforeExit は、エクスプローラーから直接起動された場合のみ待機します
 func waitBeforeExit() {
-	// 注: JSON出力時など、パイプ（|）を通じて他のプログラムにデータを渡している最中は
-	// 待機プロンプトを出さないための処理を将来的に追加する余地があります。
-	// 今回は確実性を優先し、常に待機します。
-	stat, err := os.Stdin.Stat()
-	if err == nil && (stat.Mode()&os.ModeCharDevice) != 0 {
-		os.Stdout.WriteString("\nエンターキーを押して終了してください...")
-		scanner := bufio.NewScanner(os.Stdin)
-		scanner.Scan()
+	// StartedByExplorer() は、Windows環境でexeがダブルクリックで
+	// 起動された場合にのみ true を返します。
+	// コマンドラインからの実行や、"| fzf" のようなパイプ実行時は false となるため、
+	// 待機処理が発生せず、他のコマンドとスムーズに連携できます。
+	if mousetrap.StartedByExplorer() {
+		fmt.Print("\nエンターキーを押して終了してください...")
+		bufio.NewScanner(os.Stdin).Scan()
 	}
 }
