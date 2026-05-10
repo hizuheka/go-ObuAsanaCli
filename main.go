@@ -29,6 +29,7 @@ func main() {
 		UI:         NewConsoleUI(os.Stdin, os.Stdout),
 		Config:     configStore,
 		TokenStore: NewTokenStore(),
+		Runner:     NewCommandRunner(),
 		Logger:     logger,
 		NowFn:      time.Now,
 	}

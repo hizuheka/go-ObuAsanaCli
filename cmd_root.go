@@ -15,6 +15,7 @@ type CLI struct {
 	Config     ConfigStore
 	TokenStore TokenStore
 	Client     AsanaClient
+	Runner     CommandRunner
 	Logger     *slog.Logger
 	NowFn      func() time.Time
 }
@@ -35,6 +36,7 @@ func NewRootCmd(cli *CLI) *cobra.Command {
 	// サブコマンドを登録
 	rootCmd.AddCommand(NewAddCmd(cli))
 	rootCmd.AddCommand(NewListCmd(cli))
+	rootCmd.AddCommand(NewSearchCmd(cli))
 
 	return rootCmd
 }
